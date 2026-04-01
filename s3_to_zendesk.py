@@ -844,13 +844,21 @@ def list_all_recordings(year_filter=None, month_filter=None):
     return recordings
 
 def upload_attachment_to_zendesk(file_path, filename):
-    with open(file_path, 'rb') as f:
-        auth = (f'{ZENDESK_EMAIL}/token', ZENDESK_API_TOKEN)
-        files = {'file': (filename, f)}
-        params = {'filename': filename}
-        response = requests.post(ZENDESK_UPLOAD_URL, auth=auth, files=files, params=params)
+    auth = (f'{ZENDESK_EMAIL}/token', ZENDESK_API_TOKEN)
+    params = {'filename': filename}
+    for attempt in range(8):
+        with open(file_path, 'rb') as f:
+            files = {'file': (filename, f)}
+            response = requests.post(ZENDESK_UPLOAD_URL, auth=auth, files=files, params=params)
+        if response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 60))
+            wait = max(retry_after, 60) * (attempt + 1)
+            logger.warning(f"⏳ Zendesk rate limit hit uploading {filename}, waiting {wait}s (attempt {attempt+1}/8)...")
+            time.sleep(wait)
+            continue
         response.raise_for_status()
         return response.json()['upload']['token']
+    raise Exception(f"Failed to upload {filename} after 8 attempts due to rate limiting")
 
 def process_single_recording(recording_info, ticket_status="solved"):
     """Process a single recording and create a Zendesk ticket"""
@@ -993,9 +1001,17 @@ def create_ticket_with_attachment(recording_id, upload_token, comment=None, stat
             }
         }
     }
-    response = requests.post(ZENDESK_API_URL, auth=auth, headers=headers, json=data)
-    response.raise_for_status()
-    return response.json()['ticket']['id']
+    for attempt in range(8):
+        response = requests.post(ZENDESK_API_URL, auth=auth, headers=headers, json=data)
+        if response.status_code == 429:
+            retry_after = int(response.headers.get('Retry-After', 60))
+            wait = max(retry_after, 60) * (attempt + 1)
+            logger.warning(f"⏳ Zendesk rate limit hit creating ticket for {recording_id}, waiting {wait}s (attempt {attempt+1}/8)...")
+            time.sleep(wait)
+            continue
+        response.raise_for_status()
+        return response.json()['ticket']['id']
+    raise Exception(f"Failed to create ticket for {recording_id} after 8 attempts due to rate limiting")
 
 def main():
     parser = argparse.ArgumentParser(description="Send S3 or local call recording to Zendesk as ticket attachment.")
@@ -1008,7 +1024,7 @@ def main():
     parser.add_argument('--month', type=str, help='Filter by specific month in YYYY-MM format (for bulk processing, e.g., 2025-10)')
     parser.add_argument('--status', default='closed', choices=['new', 'open', 'pending', 'hold', 'solved', 'closed'], 
                        help='Ticket status (default: closed)')
-    parser.add_argument('--max-workers', type=int, default=5, help='Number of concurrent workers for bulk processing (default: 5)')
+    parser.add_argument('--max-workers', type=int, default=2, help='Number of concurrent workers for bulk processing (default: 2)')
     parser.add_argument('--limit', type=int, help='Limit number of recordings to process (for testing)')
     parser.add_argument('--auto-restart', action='store_true', help='Automatically pause and wait for credential refresh on credential errors')
     parser.add_argument('--headless', action='store_true',
