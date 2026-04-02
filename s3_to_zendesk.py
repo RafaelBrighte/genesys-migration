@@ -813,7 +813,7 @@ def list_all_recordings(year_filter=None, month_filter=None):
 
                             # Set candidate metadata key — existence is checked during processing,
                             # not here, to avoid thousands of extra S3 API calls during the scan.
-                            metadata_key = key.replace('.opus', '.json')
+                            metadata_key = key.replace('.opus', '.opus_metadata.json')
 
                             recordings.append({
                                 'recording_id': recording_id,
@@ -1140,7 +1140,7 @@ def main():
                 recording_info = {
                     'recording_id': recording_id,
                     'opus_key': s3_key,
-                    'metadata_key': s3_key.replace('.opus', '.json'),
+                    'metadata_key': s3_key.replace('.opus', '.opus_metadata.json'),
                     'has_metadata': True,
                     'size': 0,
                     'last_modified': datetime.now()
